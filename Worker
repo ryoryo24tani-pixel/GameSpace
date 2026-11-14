@@ -1,0 +1,143 @@
+// つみき ランキング用API (Cloudflare Workers + D1)
+// 集める情報: ニックネーム・合言葉(ハッシュ)・スコアだけ。メールや本名は持たない。
+
+const BOARDS = {
+  height:  { min: 1,  max: 2000, asc: false },
+  combo:   { min: 1,  max: 2000, asc: false },
+  narrow:  { min: 25, max: 1100, asc: true  }, // cm
+  perfect: { min: 1,  max: 2000, asc: false },
+};
+const SESSION_SEC = 60 * 60 * 24 * 30;
+const enc = new TextEncoder();
+
+const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)))
+  .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const sha = async s => b64(await crypto.subtle.digest("SHA-256", enc.encode(s)));
+const rand = n => b64(crypto.getRandomValues(new Uint8Array(n)));
+const same = (a, b) => { let d = a.length ^ b.length; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ (b.charCodeAt(i) || 0); return d === 0; };
+
+async function hashPass(pass, salt) {
+  const key = await crypto.subtle.importKey("raw", enc.encode(pass), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", hash: "SHA-256", salt: enc.encode(salt), iterations: 100000 }, key, 256);
+  return b64(bits);
+}
+
+export default {
+  async fetch(req, env) {
+    const origin = req.headers.get("Origin") || "";
+    const allowed = (env.ALLOWED_ORIGIN || "").split(",").map(s => s.trim());
+    const cors = {
+      "Vary": "Origin",
+      "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    };
+    if (allowed.includes(origin)) cors["Access-Control-Allow-Origin"] = origin;
+    const out = (data, status = 200) => new Response(JSON.stringify(data), {
+      status, headers: { ...cors, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
+    const fail = (msg, status = 400) => out({ error: msg }, status);
+
+    if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+    if (origin && !allowed.includes(origin)) return fail("許可されていないサイトです", 403);
+
+    const db = env.DB, now = Math.floor(Date.now() / 1000);
+    const url = new URL(req.url), path = url.pathname;
+
+    const authUser = async () => {
+      const m = /^Bearer (.+)$/.exec(req.headers.get("Authorization") || "");
+      if (!m) return null;
+      return await db.prepare(
+        "SELECT u.id, u.name FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires > ?"
+      ).bind(await sha(m[1]), now).first();
+    };
+    const startSession = async (id, name) => {
+      const token = rand(32);
+      await db.batch([
+        db.prepare("DELETE FROM sessions WHERE expires < ?").bind(now),
+        db.prepare("INSERT INTO sessions (token_hash, user_id, expires) VALUES (?, ?, ?)")
+          .bind(await sha(token), id, now + SESSION_SEC),
+      ]);
+      return out({ token, name });
+    };
+    const body = async () => { try { return await req.json(); } catch { return {}; } };
+
+    try {
+      if (path === "/register" && req.method === "POST") {
+        const { name, pass } = await body();
+        const n = String(name || "").trim();
+        if (n.length < 1 || n.length > 12 || /[\u0000-\u001f<>]/.test(n)) return fail("ニックネームは1〜12文字にしてください");
+        if (typeof pass !== "string" || pass.length < 6 || pass.length > 64) return fail("合言葉は6〜64文字にしてください");
+        const salt = rand(16), h = await hashPass(pass, salt);
+        try {
+          const r = await db.prepare("INSERT INTO users (name, salt, pass_hash, created) VALUES (?, ?, ?, ?)")
+            .bind(n, salt, h, now).run();
+          return startSession(r.meta.last_row_id, n);
+        } catch { return fail("そのニックネームは使われています", 409); }
+      }
+
+      if (path === "/login" && req.method === "POST") {
+        const { name, pass } = await body();
+        const u = await db.prepare("SELECT * FROM users WHERE name = ?").bind(String(name || "").trim()).first();
+        const bad = "ニックネームか合言葉が違います";
+        if (!u) return fail(bad, 401);
+        if (u.locked_until > now) return fail("失敗が続いたため、しばらく待ってからやり直してください", 429);
+        const ok = typeof pass === "string" && same(await hashPass(pass, u.salt), u.pass_hash);
+        if (!ok) {
+          const f = u.fails + 1;
+          await db.prepare("UPDATE users SET fails = ?, locked_until = ? WHERE id = ?")
+            .bind(f >= 5 ? 0 : f, f >= 5 ? now + 300 : 0, u.id).run();
+          return fail(bad, 401);
+        }
+        await db.prepare("UPDATE users SET fails = 0, locked_until = 0 WHERE id = ?").bind(u.id).run();
+        return startSession(u.id, u.name);
+      }
+
+      if (path === "/logout" && req.method === "POST") {
+        const m = /^Bearer (.+)$/.exec(req.headers.get("Authorization") || "");
+        if (m) await db.prepare("DELETE FROM sessions WHERE token_hash = ?").bind(await sha(m[1])).run();
+        return out({ ok: true });
+      }
+
+      if (path === "/me" && req.method === "DELETE") {
+        const u = await authUser();
+        if (!u) return fail("ログインしてください", 401);
+        await db.batch([
+          db.prepare("DELETE FROM scores WHERE user_id = ?").bind(u.id),
+          db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(u.id),
+          db.prepare("DELETE FROM users WHERE id = ?").bind(u.id),
+        ]);
+        return out({ ok: true });
+      }
+
+      if (path === "/submit" && req.method === "POST") {
+        const u = await authUser();
+        if (!u) return fail("ログインしてください", 401);
+        const { board, value } = await body();
+        const b = BOARDS[board];
+        if (!b || !Number.isInteger(value) || value < b.min || value > b.max) return fail("記録が正しくありません");
+        await db.prepare(
+          `INSERT INTO scores (user_id, board, value, updated) VALUES (?, ?, ?, ?)
+           ON CONFLICT (user_id, board) DO UPDATE SET value = excluded.value, updated = excluded.updated
+           WHERE excluded.value ${b.asc ? "<" : ">"} scores.value`
+        ).bind(u.id, board, value, now).run();
+        return out({ ok: true });
+      }
+
+      if (path === "/top" && req.method === "GET") {
+        const board = url.searchParams.get("board"), b = BOARDS[board];
+        if (!b) return fail("ランキングが見つかりません", 404);
+        const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit")) || 20, 1), 50);
+        const me = await authUser();
+        const { results } = await db.prepare(
+          `SELECT u.id, u.name, s.value FROM scores s JOIN users u ON u.id = s.user_id
+           WHERE s.board = ? ORDER BY s.value ${b.asc ? "ASC" : "DESC"}, s.updated ASC LIMIT ?`
+        ).bind(board, limit).all();
+        return out({ rows: results.map(r => ({ name: r.name, value: r.value, me: !!me && me.id === r.id })) });
+      }
+
+      return fail("見つかりません", 404);
+    } catch (e) {
+      return fail("サーバーでエラーが起きました", 500);
+    }
+  },
+};
