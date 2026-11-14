@@ -1,0 +1,12 @@
+name = "tsumiki-api"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+
+[vars]
+# ゲームを公開するURLの「オリジン」(パスなし)。複数ならカンマ区切り。
+ALLOWED_ORIGIN = "https://YOURNAME.github.io"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tsumiki"
+database_id = "wrangler d1 create で出たIDをここに"

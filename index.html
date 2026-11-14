@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>つみき</title>
+<meta name="description" content="ブロックをタップで落として、どこまで高く積めるかを競うブラウザゲーム。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&display=swap" rel="stylesheet">
+<!-- 広告スクリプト(AdSenseなど)はここに貼る -->
+<style>
+  :root{
+    --bg:#d8e6e0; --ink:#1f2a38; --paper:#eef3ee; --sub:#5d7380;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    background:var(--bg);color:var(--ink);
+    font-family:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Hiragino Sans","Yu Gothic",sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    user-select:none;-webkit-user-select:none;touch-action:manipulation;
+    -webkit-tap-highlight-color:transparent;overflow:hidden;
+  }
+  .ad{width:100%;max-width:728px;min-height:50px;flex:none;text-align:center;overflow:hidden}
+  .ad:empty{display:none}
+  main{flex:1;min-height:0;width:100%;display:flex;justify-content:center;align-items:center;padding:6px}
+  canvas{display:block;border-radius:10px;touch-action:none;cursor:pointer;outline:none}
+  canvas:focus-visible{outline:3px solid var(--ink);outline-offset:3px}
+  footer{
+    flex:none;width:100%;max-width:728px;padding:4px 12px 8px;
+    display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:6px 12px;
+    font-size:12px;color:var(--sub);line-height:1.4;
+  }
+  .pill{
+    font:inherit;color:var(--ink);background:transparent;border:1.5px solid var(--ink);
+    border-radius:999px;padding:4px 12px;cursor:pointer;flex:none;
+  }
+  .pill:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+  .btns{display:flex;gap:8px;flex:none}
+  .modal{position:fixed;inset:0;background:rgba(31,42,56,.45);display:flex;align-items:center;justify-content:center;padding:16px;z-index:10}
+  .modal[hidden]{display:none}
+  .modal .box{background:var(--paper);border:2px solid var(--ink);border-radius:12px;width:100%;max-width:420px;max-height:100%;display:flex;flex-direction:column;padding:14px;gap:10px}
+  #rk .tabs{display:flex;flex-wrap:wrap;gap:6px}
+  #rk .tabs .pill[aria-selected="true"]{background:var(--ink);color:var(--paper)}
+  .modal .who{font-size:12px;color:var(--sub)}
+  #rk ol{list-style:none;margin:0;padding:0;overflow:auto;flex:1;min-height:140px}
+  #rk li{display:flex;gap:10px;padding:7px 4px;border-bottom:1px solid #c9d8d0;font-size:15px}
+  #rk li.me{background:#dfe9e3}
+  #rk li .n{width:2em;color:var(--sub)}
+  #rk li .u{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #rk li .v{font-weight:700}
+  #rk li.empty{color:var(--sub);justify-content:center;border:0}
+  .modal label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--sub)}
+  .modal input{font:inherit;font-size:16px;padding:8px 10px;border:1.5px solid var(--ink);border-radius:8px;background:#fff;color:var(--ink)}
+  .modal .row{display:flex;gap:8px;flex-wrap:wrap}
+  .modal p{margin:0}
+  .stack{display:flex;flex-direction:column;gap:10px}
+  .modal [hidden]{display:none}
+</style>
+</head>
+<body>
+
+<div class="ad" id="ad-top">
+  <!-- 上部広告：ここに広告コードを貼る。貼るまでは表示されません -->
+</div>
+
+<main><canvas id="g" tabindex="0" aria-label="つみき。タップかスペースキーでブロックを落とす"></canvas></main>
+
+<div class="ad" id="ad-bottom">
+  <!-- 下部広告：ここに広告コードを貼る -->
+</div>
+
+<footer>
+  <span>このゲームはAIの支援を受けて制作しました。</span>
+  <div class="btns">
+    <button id="rkbtn" class="pill" type="button">ランキング</button>
+    <button id="aubtn" class="pill" type="button">ログイン</button>
+    <button id="snd" class="pill" type="button" aria-pressed="true">おと：ON</button>
+  </div>
+</footer>
+
+<div id="rk" class="modal" role="dialog" aria-modal="true" aria-label="ランキング" hidden>
+  <div class="box">
+    <div class="tabs" id="rk-tabs" role="tablist"></div>
+    <div class="who" id="rk-who"></div>
+    <ol id="rk-list"></ol>
+    <button id="rk-close" class="pill" type="button">とじる</button>
+  </div>
+</div>
+
+<div id="au" class="modal" role="dialog" aria-modal="true" aria-label="ログイン" hidden>
+  <div class="box">
+    <div id="au-in" class="stack">
+      <label>ニックネーム<input id="au-name" maxlength="12" autocomplete="username"></label>
+      <label>合言葉（6文字以上）<input id="au-pass" type="password" maxlength="64" autocomplete="current-password"></label>
+      <p class="who">メールアドレスや本名は集めません。合言葉は暗号化して保存します。忘れた場合は再発行できないので、新しく作り直してください。</p>
+      <div class="row">
+        <button id="au-login" class="pill" type="button">ログイン</button>
+        <button id="au-reg" class="pill" type="button">新規登録</button>
+      </div>
+    </div>
+    <div id="au-out" class="stack" hidden>
+      <p id="au-me"></p>
+      <div class="row">
+        <button id="au-logout" class="pill" type="button">ログアウト</button>
+        <button id="au-del" class="pill" type="button">アカウント削除</button>
+      </div>
+    </div>
+    <div class="who" id="au-msg" role="status"></div>
+    <button id="au-close" class="pill" type="button">とじる</button>
+  </div>
+</div>
+
+<script>
+(() => {
+"use strict";
+const cv = document.getElementById("g"), c = cv.getContext("2d");
+const main = document.querySelector("main");
+const W = 360, H = 600, BH = 26, GY = H - 64;
+const COLS = ["#e8b04a", "#3f7f8c", "#d9695f", "#6a8f5c", "#4a5a8a", "#f2efe6"];
+const INK = "#1f2a38", PAPER = "#eef3ee";
+const FONT = '"Zen Maru Gothic","Hiragino Maru Gothic ProN",sans-serif';
+
+/* ---------- サイズ調整 ---------- */
+let S = 1, DPR = 1;
+function fit(){
+  const aw = main.clientWidth - 12, ah = main.clientHeight - 12;
+  S = Math.max(0.3, Math.min(aw / W, ah / H));
+  DPR = Math.min(window.devicePixelRatio || 1, 3);
+  cv.style.width = W * S + "px";
+  cv.style.height = H * S + "px";
+  cv.width = Math.round(W * S * DPR);
+  cv.height = Math.round(H * S * DPR);
+}
+addEventListener("resize", fit);
+new ResizeObserver(fit).observe(main);
+
+/* ---------- ゲーム状態 ---------- */
+let st = "ready", blocks, cur, debris, cam, combo, score, best = 0, overAt = 0, msgT = 0, msg = "", run, status = "", paused = false, runId = 0;
+try { best = +localStorage.getItem("tsumiki-best") || 0; } catch (e) {}
+
+const speed = () => Math.min(130 + score * 7, 360);
+function mk(){
+  const top = blocks[blocks.length - 1], left = blocks.length % 2 === 1;
+  return { x: left ? 12 : W - 12 - top.w, w: top.w, dir: left ? 1 : -1 };
+}
+function reset(){
+  blocks = [{ x: 100, w: 160 }];
+  debris = []; cam = 0; combo = 0; score = 0; msgT = 0;
+  run = { pt: 0, maxCombo: 0, minW: null }; status = ""; runId++;
+  cur = mk();
+}
+reset();
+
+function drop(){
+  const top = blocks[blocks.length - 1];
+  const l = Math.max(cur.x, top.x), r = Math.min(cur.x + cur.w, top.x + top.w);
+  const ov = r - l, y = GY - (blocks.length + 1) * BH;
+  if (ov <= 4){
+    debris.push({ x: cur.x, w: cur.w, y, vy: 0, i: blocks.length });
+    over(); return;
+  }
+  if (Math.abs(cur.x - top.x) < 5){
+    combo++; run.pt++; run.maxCombo = Math.max(run.maxCombo, combo);
+    blocks.push({ x: top.x, w: Math.min(top.w + (combo >= 3 ? 6 : 0), 170) });
+    msg = combo >= 3 ? "ぴったり ×" + combo : "ぴったり"; msgT = 0.7;
+    score++; note(score, true);
+  } else {
+    combo = 0;
+    if (cur.x < top.x) debris.push({ x: cur.x, w: l - cur.x, y, vy: 0, i: blocks.length });
+    else debris.push({ x: r, w: cur.x + cur.w - r, y, vy: 0, i: blocks.length });
+    blocks.push({ x: l, w: ov });
+    score++; note(score, false);
+  }
+  const nw = blocks[blocks.length - 1].w;
+  if (run.minW === null || nw < run.minW) run.minW = nw;
+  cur = mk();
+}
+function over(){
+  st = "over"; overAt = performance.now();
+  if (score > best){
+    best = score;
+    try { localStorage.setItem("tsumiki-best", String(best)); } catch (e) {}
+  }
+  tone(147, 0.5, "triangle", 0.2); tone(110, 0.7, "triangle", 0.2, 0.16);
+  submitRun();
+}
+function act(){
+  if (paused) return;
+  audio();
+  if (st === "ready"){ startMusic(); st = "play"; return; }
+  if (st === "play"){ drop(); return; }
+  if (performance.now() - overAt > 450){ reset(); st = "play"; }
+}
+cv.addEventListener("pointerdown", e => { e.preventDefault(); act(); });
+addEventListener("keydown", e => {
+  if (e.code === "Space" || e.code === "Enter" || e.code === "ArrowDown"){
+    if (paused || (document.activeElement && document.activeElement.tagName === "BUTTON")) return;
+    e.preventDefault(); act();
+  }
+});
+
+/* ---------- 更新 ---------- */
+let last = performance.now();
+function update(dt){
+  if (paused) return;
+  if (st === "play"){
+    cur.x += cur.dir * speed() * dt;
+    if (cur.x < 12){ cur.x = 12; cur.dir = 1; }
+    if (cur.x + cur.w > W - 12){ cur.x = W - 12 - cur.w; cur.dir = -1; }
+  }
+  const target = Math.max(0, (blocks.length - 7) * BH);
+  cam += (target - cam) * Math.min(1, dt * 5);
+  for (const d of debris){ d.vy += 900 * dt; d.y += d.vy * dt; }
+  debris = debris.filter(d => d.y < GY + cam + 200);
+  if (msgT > 0) msgT -= dt;
+}
+
+/* ---------- 描画 ---------- */
+function block(x, y, w, i){
+  c.fillStyle = COLS[i % COLS.length];
+  c.strokeStyle = INK; c.lineWidth = 2;
+  c.beginPath(); c.roundRect(x, y, w, BH, 4); c.fill(); c.stroke();
+}
+function text(s, x, y, size, align, color, weight){
+  c.font = (weight || 700) + " " + size + "px " + FONT;
+  c.textAlign = align || "left"; c.fillStyle = color || INK;
+  c.fillText(s, x, y);
+}
+function draw(now){
+  c.setTransform(S * DPR, 0, 0, S * DPR, 0, 0);
+  c.fillStyle = "#e4eee8"; c.fillRect(0, 0, W, H);
+
+  // 月と山
+  c.fillStyle = "#f4f7f1";
+  c.beginPath(); c.arc(262, 140 + cam * 0.12, 48, 0, 7); c.fill();
+  const my = GY + cam * 0.35;
+  c.fillStyle = "#c3d7ce";
+  c.beginPath(); c.moveTo(-10, my); c.lineTo(80, my - 120); c.lineTo(170, my - 30); c.lineTo(260, my - 150); c.lineTo(380, my); c.closePath(); c.fill();
+  c.fillStyle = "#a9c4b9";
+  c.beginPath(); c.moveTo(-10, my); c.lineTo(40, my - 50); c.lineTo(130, my); c.closePath(); c.fill();
+  c.beginPath(); c.moveTo(200, my); c.lineTo(290, my - 70); c.lineTo(380, my); c.closePath(); c.fill();
+
+  // 地面
+  c.fillStyle = INK; c.fillRect(0, GY + cam, W, H);
+
+  blocks.forEach((b, i) => block(b.x, GY - (i + 1) * BH + cam, b.w, i));
+  if (st === "play") block(cur.x, GY - (blocks.length + 1) * BH + cam, cur.w, blocks.length);
+  for (const d of debris) block(d.x, d.y + cam, d.w, d.i);
+
+  // HUD
+  text(String(score), 20, 62, 50, "left");
+  text("最高 " + best, W - 20, 32, 16, "right", "#5d7380", 500);
+  if (msgT > 0){
+    c.globalAlpha = Math.min(1, msgT * 3);
+    text(msg, W / 2, 112, 22, "center");
+    c.globalAlpha = 1;
+  }
+
+  if (st === "ready"){
+    c.fillStyle = "rgba(238,243,238,.82)"; c.fillRect(0, 170, W, 190);
+    text("つみき", W / 2, 245, 54, "center");
+    text("ブロックを落として、高く積もう", W / 2, 285, 15, "center", "#5d7380", 500);
+    if (Math.floor(now / 600) % 2 === 0) text("タップで はじめる", W / 2, 335, 19, "center");
+  } else if (st === "over"){
+    c.fillStyle = "rgba(238,243,238,.88)"; c.fillRect(0, 150, W, 240);
+    text(score + "段", W / 2, 232, 58, "center");
+    text("連続ぴったり " + run.maxCombo + "回　最狭 " + (run.minW === null ? "-" : fmtNarrow(Math.round(run.minW / 16 * 100))), W / 2, 272, 15, "center", "#5d7380", 500);
+    text(score >= best && score > 0 ? "最高記録です" : "最高 " + best + "段", W / 2, 298, 15, "center", "#5d7380", 500);
+    if (status) text(status, W / 2, 325, 13, "center", "#5d7380", 500);
+    if (performance.now() - overAt > 450) text("タップで もういちど", W / 2, 365, 19, "center");
+  }
+}
+function loop(now){
+  const dt = Math.min(0.033, (now - last) / 1000); last = now;
+  update(dt); draw(now);
+  requestAnimationFrame(loop);
+}
+
+/* ---------- 音 ---------- */
+let AC = null, musicOn = true, timer = null, step = 0;
+try { musicOn = localStorage.getItem("tsumiki-snd") !== "0"; } catch (e) {}
+const PEN = [0, 2, 4, 7, 9];
+const hz = n => 261.63 * Math.pow(2, (PEN[((n % 5) + 5) % 5] + 12 * Math.floor(n / 5)) / 12);
+function audio(){
+  if (!AC){
+    const A = window.AudioContext || window.webkitAudioContext;
+    if (!A) return null;
+    AC = new A();
+  }
+  if (AC.state === "suspended") AC.resume();
+  return AC;
+}
+function tone(f, d, type, v, when){
+  if (!AC || !musicOn) return;
+  const t = AC.currentTime + (when || 0), o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.value = f;
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(v, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  o.connect(g); g.connect(AC.destination);
+  o.start(t); o.stop(t + d + 0.05);
+}
+function note(n, perfect){
+  tone(hz(n % 10), 0.3, "triangle", 0.18);
+  if (perfect) tone(hz(n % 10 + 5), 0.55, "sine", 0.12, 0.06);
+}
+const MEL = [4,-1,2,4,5,-1,4,2, 0,-1,2,-1,1,-1,-1,-1, 4,-1,2,4,6,-1,5,4, 2,-1,1,-1,0,-1,-1,-1];
+const BASS = [0, 3, 1, 2];
+function startMusic(){
+  if (timer || !musicOn || !AC) return;
+  timer = setInterval(() => {
+    const m = MEL[step % MEL.length];
+    if (m >= 0) tone(hz(m) / 2, 0.9, "sine", 0.07);
+    if (step % 8 === 0) tone(hz(BASS[(step / 8 | 0) % 4]) / 4, 3, "triangle", 0.08);
+    step++;
+  }, 420);
+}
+function stopMusic(){ clearInterval(timer); timer = null; }
+
+const btn = document.getElementById("snd");
+function label(){ btn.textContent = "おと：" + (musicOn ? "ON" : "OFF"); btn.setAttribute("aria-pressed", String(musicOn)); }
+label();
+btn.addEventListener("click", () => {
+  musicOn = !musicOn; label();
+  try { localStorage.setItem("tsumiki-snd", musicOn ? "1" : "0"); } catch (e) {}
+  if (musicOn){ if (audio() && st !== "ready") startMusic(); } else stopMusic();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden){ stopMusic(); if (AC) AC.suspend(); }
+  else { if (AC) AC.resume(); if (st !== "ready") startMusic(); }
+});
+
+/* ---------- ランキング ---------- */
+// 最初のブロック(160px)を10mとして、16px = 1m。最狭はcmの整数で扱う。
+const fmtNarrow = cm => (cm / 100).toFixed(2) + "m";
+const NARROW_MIN_FLOORS = 10; // 最狭は、この段数以上積んだプレイだけ対象(ギリギリ着地での荒らし防止)
+const BOARDS = [
+  { id: "height",  name: "積み上げ",     asc: false, fmt: v => v + "段" },
+  { id: "combo",   name: "連続ぴったり", asc: false, fmt: v => v + "回" },
+  { id: "narrow",  name: "最狭",         asc: true,  fmt: fmtNarrow },
+  { id: "perfect", name: "ぴったり合計", asc: false, fmt: v => v + "回" }
+];
+
+// 本番は、ログイン済みのサーバーにつなぐオブジェクトを window.RankingBackend に入れる:
+//   user()                  -> { name } かnull
+//   submit(boardId, value)  -> Promise  (失敗はreject)
+//   top(boardId, limit)     -> Promise<[{ name, value, me? }]>  (並びはサーバー側で。最狭は小さい順)
+// 入っていない間は、この端末だけで動く簡易版を使う。
+const LOCAL = {
+  local: true,
+  user: () => ({ name: "あなた" }),
+  async submit(id, value){
+    const bd = BOARDS.find(b => b.id === id), key = "tsumiki-rk-" + id;
+    let a = []; try { a = JSON.parse(localStorage.getItem(key)) || []; } catch (e) {}
+    a.push({ name: "あなた", value, me: true });
+    a.sort((x, y) => bd.asc ? x.value - y.value : y.value - x.value);
+    try { localStorage.setItem(key, JSON.stringify(a.slice(0, 10))); } catch (e) {}
+  },
+  async top(id, limit){
+    try { return (JSON.parse(localStorage.getItem("tsumiki-rk-" + id)) || []).slice(0, limit); } catch (e) { return []; }
+  }
+};
+const backend = () => window.RankingBackend || (API ? REMOTE : LOCAL);
+
+async function submitRun(){
+  if (score < 1 || run.minW === null) return;
+  const my = runId, b = backend();
+  if (b.user && !b.user()){ status = "ログインするとランキングに記録できます"; return; }
+  const vals = { height: score, combo: run.maxCombo, perfect: run.pt, narrow: Math.round(run.minW / 16 * 100) };
+  const skip = id => (id === "combo" || id === "perfect") ? vals[id] < 1 : (id === "narrow" && score < NARROW_MIN_FLOORS);
+  status = "記録を送信中…";
+  try {
+    for (const bd of BOARDS) if (!skip(bd.id)) await b.submit(bd.id, vals[bd.id]);
+    if (my === runId) status = "ランキングに記録しました";
+  } catch (e) {
+    if (my === runId) status = "記録を送れませんでした";
+  }
+}
+
+const rk = document.getElementById("rk"), rkTabs = document.getElementById("rk-tabs");
+const rkList = document.getElementById("rk-list"), rkWho = document.getElementById("rk-who");
+let tabIdx = 0;
+BOARDS.forEach((bd, i) => {
+  const t = document.createElement("button");
+  t.type = "button"; t.className = "pill"; t.textContent = bd.name; t.setAttribute("role", "tab");
+  t.addEventListener("click", () => showBoard(i));
+  rkTabs.appendChild(t);
+});
+function row(cls, parts){
+  const li = document.createElement("li"); if (cls) li.className = cls;
+  parts.forEach(([k, v]) => { const s = document.createElement("span"); s.className = k; s.textContent = v; li.appendChild(s); });
+  return li;
+}
+async function showBoard(i){
+  tabIdx = i;
+  [...rkTabs.children].forEach((t, j) => t.setAttribute("aria-selected", String(j === i)));
+  const bd = BOARDS[i], b = backend(), u = b.user ? b.user() : null;
+  rkWho.textContent = u ? u.name + (b.local ? "（この端末のみ）" : "") + " の記録" : "ログインすると記録されます";
+  rkList.replaceChildren(row("empty", [["", "読み込み中…"]]));
+  try {
+    const rows = await b.top(bd.id, 20);
+    if (tabIdx !== i) return;
+    rkList.replaceChildren(...(rows.length
+      ? rows.map((r, n) => row(r.me ? "me" : "", [["n", String(n + 1)], ["u", String(r.name)], ["v", bd.fmt(r.value)]]))
+      : [row("empty", [["", "まだ記録がありません"]])]));
+  } catch (e) {
+    if (tabIdx === i) rkList.replaceChildren(row("empty", [["", "読み込めませんでした"]]));
+  }
+}
+function openRk(){ paused = true; rk.hidden = false; showBoard(tabIdx); document.getElementById("rk-close").focus(); }
+function closeRk(){ rk.hidden = true; paused = false; }
+document.getElementById("rkbtn").addEventListener("click", openRk);
+document.getElementById("rk-close").addEventListener("click", closeRk);
+rk.addEventListener("click", e => { if (e.target === rk) closeRk(); });
+addEventListener("keydown", e => { if (e.key === "Escape" && !rk.hidden) closeRk(); });
+
+/* ---------- ログイン(ニックネーム + 合言葉) ---------- */
+// Cloudflare Workers をデプロイしたら、そのURLをここに入れる。例: "https://tsumiki-api.xxxx.workers.dev"
+// 空のままなら、ログインなし・この端末だけのランキングで動く。
+const API = "";
+const AUTH_KEY = "tsumiki-auth";
+let auth = null;
+try { auth = JSON.parse(localStorage.getItem(AUTH_KEY)); } catch (e) {}
+const $ = id => document.getElementById(id);
+
+async function api(path, o){
+  o = o || {};
+  let r;
+  try {
+    r = await fetch(API + path, {
+      method: o.method || (o.body ? "POST" : "GET"),
+      headers: Object.assign({ "Content-Type": "application/json" }, auth ? { Authorization: "Bearer " + auth.token } : {}),
+      body: o.body ? JSON.stringify(o.body) : undefined
+    });
+  } catch (e) { throw Object.assign(new Error("サーバーにつながりません"), { status: 0 }); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(j.error || "エラーが起きました"), { status: r.status });
+  return j;
+}
+const REMOTE = {
+  user: () => auth ? { name: auth.name } : null,
+  async submit(id, v){
+    try { await api("/submit", { body: { board: id, value: v } }); }
+    catch (e) { if (e.status === 401) setAuth(null); throw e; }
+  },
+  async top(id, n){ return (await api("/top?board=" + id + "&limit=" + n)).rows; }
+};
+
+function setAuth(a){
+  auth = a;
+  try { a ? localStorage.setItem(AUTH_KEY, JSON.stringify(a)) : localStorage.removeItem(AUTH_KEY); } catch (e) {}
+  $("aubtn").textContent = a ? a.name : "ログイン";
+  $("au-in").hidden = !!a; $("au-out").hidden = !a;
+  $("au-me").textContent = a ? a.name + " でログイン中" : "";
+}
+function openAu(){ paused = true; $("au").hidden = false; $("au-msg").textContent = ""; (auth ? $("au-close") : $("au-name")).focus(); }
+function closeAu(){ $("au").hidden = true; paused = false; }
+async function doAuth(kind){
+  $("au-msg").textContent = "通信中…";
+  try {
+    const j = await api("/" + kind, { body: { name: $("au-name").value.trim(), pass: $("au-pass").value } });
+    setAuth({ token: j.token, name: j.name });
+    $("au-pass").value = ""; closeAu();
+  } catch (e) { $("au-msg").textContent = e.message; }
+}
+if (!API) $("aubtn").hidden = true;
+setAuth(auth);
+$("aubtn").addEventListener("click", openAu);
+$("au-close").addEventListener("click", closeAu);
+$("au").addEventListener("click", e => { if (e.target === $("au")) closeAu(); });
+$("au-login").addEventListener("click", () => doAuth("login"));
+$("au-reg").addEventListener("click", () => doAuth("register"));
+$("au-pass").addEventListener("keydown", e => { if (e.key === "Enter") doAuth("login"); });
+$("au-logout").addEventListener("click", async () => { try { await api("/logout", { body: {} }); } catch (e) {} setAuth(null); closeAu(); });
+$("au-del").addEventListener("click", async () => {
+  if (!confirm("アカウントと記録をすべて削除します。元に戻せません。よろしいですか？")) return;
+  try { await api("/me", { method: "DELETE" }); setAuth(null); closeAu(); }
+  catch (e) { $("au-msg").textContent = e.message; }
+});
+addEventListener("keydown", e => { if (e.key === "Escape" && !$("au").hidden) closeAu(); });
+
+fit();
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
